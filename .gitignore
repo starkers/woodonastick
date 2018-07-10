@@ -1,0 +1,6 @@
+chronograf/**
+grafana/**
+influxdb/**
+kapacitor/**
+logs/**
+traefik/**

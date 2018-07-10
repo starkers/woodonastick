@@ -1,0 +1,174 @@
+---
+
+version: '2'
+services:
+
+  woodonastring:
+    # restart: always
+    build:
+      context: ./woodonastring
+    volumes:
+      - "./woodonastring/state:/state/"
+      - "./logs/:/logs/"
+
+    environment:
+      LOGFILE: "/logs/access.json"
+      POSFILE: "pos.txt"
+      ELASTIC_HOST: "elasticsearch"
+      # database prefix
+      ELASTIC_PREFIX: "logprefix"
+
+      # INFLUXDB_PORT: "8086"
+      # INFLUXDB_USER=
+      # INFLUXDB_PASS=
+      # INFLUXDB_DATABASE: "logz"
+
+    depends_on:
+      - traefik
+      - elasticsearch
+      - influxdb
+
+
+
+  elasticsearch:
+    # https://www.docker.elastic.co/ to see image:tag options
+    image: docker.elastic.co/elasticsearch/elasticsearch:6.3.1
+    environment:
+      http.host: 0.0.0.0
+      transport.host: 127.0.0.1
+    ports:
+      - 9200:9200
+
+  kibana:
+    # https://www.docker.elastic.co/ to see image:tag options
+    image: docker.elastic.co/kibana/kibana:6.3.1
+
+    # environment:
+    #   elasticsearch.url: "http://elasticsearch:9200"
+
+    depends_on:
+      - elasticsearch
+    labels:
+      traefik.port: "5601"
+      traefik.enable: "true"
+      traefik.backend: "kibana"
+      traefik.frontend.rule: "Host:kibana.localhost"
+
+    # ports:
+    #   - 5601:5601
+
+
+  # database for storing data etc
+  influxdb:
+    container_name: influxdb
+    image: influxdb:1.0.2
+    ports:
+      - "8083:8083"
+      - "8086:8086"
+    volumes:
+      - ./influxdb:/var/lib/influxdb
+    restart: always
+    labels:
+      traefik.port: "8086"
+      traefik.enable: "true"
+      traefik.backend: "influxdb"
+      traefik.frontend.rule: "Host:influxdb.localhost"
+
+  grafana:
+    container_name: grafana
+    image: grafana/grafana:5.2.1
+    restart: always
+    user: root
+    volumes:
+      - ./grafana:/var/lib/grafana
+    links:
+      - influxdb
+      - elasticsearch
+    labels:
+      traefik.port: "3000"
+      traefik.enable: "true"
+      traefik.backend: "grafana"
+      traefik.frontend.rule: "Host:grafana.localhost"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=NobodyCouldEverGuessThisWhilstRidingAnElephant
+
+  telegraf:
+    container_name: telegraf
+    image: telegraf:1.7.0
+    # network_mode: "host"
+    volumes:
+      - ./telegraf.conf:/etc/telegraf/telegraf.conf
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: always
+    ports:
+      - "8092:8092/udp"
+      - "8094:8094"
+      - "8125:8125/udp"
+    depends_on:
+      - influxdb
+      - elasticsearch
+
+  traefik:
+    image: traefik:v1.6.4-alpine
+    restart: always
+    command:
+      - -c /dev/null
+      - --api
+      - --docker
+      # - --logLevel=DEBUG
+      - --docker.domain=localhost
+      - --accesslog.filepath=/logs/access.json
+      - --accesslog.format=json
+      - --web.metrics.influxdb=true
+      - --web.metrics.influxdb.address="http://influxdb:8089"
+      - --web.metrics.influxdb.pushinterval=10s
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - "./logs/:/logs/"
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+    links:
+      - influxdb
+
+  chronograf:
+    image: chronograf:1.3.8
+    volumes:
+      - ./chronograf:/var/lib/chronograf
+    ports:
+      - "8888:8888"
+    links:
+      - influxdb
+      - kapacitor
+    environment:
+      INFLUXDB_URL: http://influxdb:8086
+      KAPACITOR_URL: http://kapacitor:9092
+    labels:
+      traefik.port: "8888"
+      traefik.enable: "true"
+      traefik.backend: "chronograf"
+      traefik.frontend.rule: "Host:chronograf.localhost"
+
+  kapacitor:
+    image: kapacitor:0.12
+    environment:
+      KAPACITOR_HOSTNAME: kapacitor
+      KAPACITOR_INFLUXDB_0_URLS_0: http://influxdb:8086
+    volumes:
+      - ./kapacitor:/var/lib/kapacitor
+    links:
+      - influxdb
+    ports:
+      - "9092:9092"
+
+  whoami1:
+    image: emilevauge/whoami
+    labels:
+      traefik.backend: "whoami"
+      traefik.frontend.rule: "Host:whoami.localhost"
+
+  whoami2:
+    image: emilevauge/whoami
+    labels:
+      traefik.backend: "whoami"
+      traefik.frontend.rule: "Host:whoami.localhost"
